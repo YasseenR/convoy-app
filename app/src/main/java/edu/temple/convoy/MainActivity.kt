@@ -1,9 +1,22 @@
 package edu.temple.convoy
 
+
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.app.ActivityCompat
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.maps.GoogleMap
+import com.google.android.gms.maps.OnMapReadyCallback
+import com.google.android.gms.maps.SupportMapFragment
+import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.Marker
+import com.google.android.gms.maps.model.MarkerOptions
+import com.google.android.gms.maps.CameraUpdateFactory
 import kotlinx.coroutines.launch
 import android.os.Bundle
 import android.widget.Button
 import androidx.activity.enableEdgeToEdge
+import androidx.annotation.RequiresPermission
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -15,6 +28,11 @@ class MainActivity : AppCompatActivity() {
 
 
     private lateinit var store: SessionStore
+    private var gMap: GoogleMap? = null
+    private var userMarker: Marker? = null
+    private val LOCATION_REQ = 1001
+    private val fused by lazy { LocationServices.getFusedLocationProviderClient(this) }
+
 
 
 
@@ -61,21 +79,96 @@ class MainActivity : AppCompatActivity() {
                 val sessionKey = store.sessionKey.first()
 
                 if (username != null && sessionKey != null) {
-                    ApiClient.api.account(
-                        action = "LOGOUT",
-                        username = username,
-                        password = null,
-                        firstname = null,
-                        lastname = null,
-                        sessionKey = sessionKey
-                    )
+                    try{
+                        ApiClient.api.account(
+                            action = "LOGOUT",
+                            username = username,
+                            password = null,
+                            firstname = null,
+                            lastname = null,
+                            sessionKey = sessionKey
+                        )
+                    }catch (e: Exception){
+                        //ignore
+                    }
+
                 }
 
                 store.clearAll()
                 showAuthChoice()
             }
         }
+        val mapFrag = supportFragmentManager.findFragmentById(R.id.mapFragment) as SupportMapFragment
+        mapFrag.getMapAsync { map ->
+            gMap = map
+            ensureLocationPermissionAndStart()
+        }
+
+
     }
+    private fun ensureLocationPermissionAndStart() {
+        val fine = ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+        val coarse = ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+
+        if (fine != PackageManager.PERMISSION_GRANTED && coarse != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                ),
+                LOCATION_REQ
+            )
+            return
+        }
+
+        startOneShotLocation()
+    }
+
+
+
+    private fun startOneShotLocation() {
+        val fine = ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+        val coarse = ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+
+        if (fine != PackageManager.PERMISSION_GRANTED && coarse != PackageManager.PERMISSION_GRANTED) {
+            return
+        }
+
+        fused.lastLocation
+            .addOnSuccessListener { loc ->
+                if (loc == null) return@addOnSuccessListener
+
+                val pos = LatLng(loc.latitude, loc.longitude)
+
+                if (userMarker == null) {
+                    userMarker = gMap?.addMarker(MarkerOptions().position(pos).title("You"))
+                    gMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(pos, 15f))
+                } else {
+                    userMarker?.position = pos
+                }
+            }
+            .addOnFailureListener {
+                //  Toast/log
+            }
+    }
+
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+
+        if (requestCode == LOCATION_REQ && grantResults.any { it == PackageManager.PERMISSION_GRANTED }) {
+            startOneShotLocation()
+        }
+    }
+
+
+
+
 
     private fun showRegisterDialog() {
         val view = layoutInflater.inflate(R.layout.dialog_register, null)
