@@ -1,0 +1,109 @@
+package edu.temple.convoy
+
+import android.Manifest
+import android.app.*
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.IBinder
+import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
+import com.google.android.gms.location.*
+
+class ConvoyLocationService : Service() {
+
+    companion object {
+        const val CHANNEL_ID = "convoy_location_channel"
+        const val NOTIF_ID = 10001
+
+        // Broadcast action + extras for updates to MainActivity
+        const val ACTION_LOCATION = "edu.temple.convoy.ACTION_LOCATION"
+        const val EXTRA_LAT = "lat"
+        const val EXTRA_LNG = "lng"
+    }
+
+    private lateinit var fused: FusedLocationProviderClient
+    private lateinit var callback: LocationCallback
+
+    override fun onCreate() {
+        super.onCreate()
+        fused = LocationServices.getFusedLocationProviderClient(this)
+
+        createNotificationChannel()
+
+        callback = object : LocationCallback() {
+            override fun onLocationResult(result: LocationResult) {
+                val loc = result.lastLocation ?: return
+
+                // Send location to activity
+                val i = Intent(ACTION_LOCATION).apply {
+                    putExtra(EXTRA_LAT, loc.latitude)
+                    putExtra(EXTRA_LNG, loc.longitude)
+                }
+                sendBroadcast(i)
+            }
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Start foreground immediately
+        startForeground(NOTIF_ID, buildNotification())
+
+        startLocationUpdates()
+        return START_STICKY
+    }
+
+    private fun startLocationUpdates() {
+        val fine = ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+        val coarse = ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
+        if (fine != PackageManager.PERMISSION_GRANTED && coarse != PackageManager.PERMISSION_GRANTED) {
+            // Permission not granted -> stop service so it doesn't crash
+            stopSelf()
+            return
+        }
+
+        // Requirement: updates whenever moved 10 meters
+        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000L)
+            .setMinUpdateDistanceMeters(10f)
+            .build()
+
+        fused.requestLocationUpdates(request, callback, mainLooper)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        fused.removeLocationUpdates(callback)
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun buildNotification(): Notification {
+        val openAppIntent = Intent(this, MainActivity::class.java)
+        val pending = PendingIntent.getActivity(
+            this,
+            0,
+            openAppIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Convoy active")
+            .setContentText("Sharing location updates...")
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setContentIntent(pending)
+            .setOngoing(true)
+            .build()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val ch = NotificationChannel(
+                CHANNEL_ID,
+                "Convoy Location",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(ch)
+        }
+    }
+}

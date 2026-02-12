@@ -1,5 +1,10 @@
 package edu.temple.convoy
-
+import android.view.View
+import androidx.core.content.ContextCompat
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.widget.TextView
 import android.Manifest
 import android.content.pm.PackageManager
@@ -24,6 +29,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.first
 import edu.temple.convoy.ApiClient
 
+
 class MainActivity : AppCompatActivity() {
 
 
@@ -32,6 +38,7 @@ class MainActivity : AppCompatActivity() {
     private var userMarker: Marker? = null
     private val LOCATION_REQ = 1001
     private val fused by lazy { LocationServices.getFusedLocationProviderClient(this) }
+    private var activeConvoyId: String? = null
 
 
 
@@ -42,19 +49,26 @@ class MainActivity : AppCompatActivity() {
         store = SessionStore(this)
 
         lifecycleScope.launch {
-
             val key = store.sessionKey.first()
-
-            if(key == null){
+            if (key == null) {
                 showAuthChoice()
-            }else{
+            } else {
                 showMainPlaceholder()
             }
-
-
         }
-
     }
+
+    private fun restartToAuth() {
+        stopService(Intent(this, ConvoyLocationService::class.java))
+        lifecycleScope.launch {
+            store.clearAll()
+            val i = Intent(this@MainActivity, MainActivity::class.java)
+            i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(i)
+            finish()
+        }
+    }
+
 
     private fun showAuthChoice(){
         setContentView(R.layout.view_auth_choice)
@@ -77,32 +91,11 @@ class MainActivity : AppCompatActivity() {
         val btnStart = findViewById<Button>(R.id.btnStartConvoy)
         val btnJoin = findViewById<Button>(R.id.btnJoinConvoy)
         val btnLeave = findViewById<Button>(R.id.btnLeaveConvoy)
-
+        val btnEnd = findViewById<Button>(R.id.btnEndConvoy)
         findViewById<Button>(R.id.btnLogout).setOnClickListener {
-            lifecycleScope.launch {
-                val username = store.username.first()
-                val sessionKey = store.sessionKey.first()
-
-                if (username != null && sessionKey != null) {
-                    try{
-                        ApiClient.api.account(
-                            action = "LOGOUT",
-                            username = username,
-                            password = null,
-                            firstname = null,
-                            lastname = null,
-                            sessionKey = sessionKey
-                        )
-                    }catch (e: Exception){
-                        //ignore
-                    }
-
-                }
-
-                store.clearAll()
-                showAuthChoice()
-            }
+            restartToAuth()
         }
+
         btnStart.setOnClickListener {
             lifecycleScope.launch {
                 val username = store.username.first()
@@ -125,6 +118,18 @@ class MainActivity : AppCompatActivity() {
                     if (status == "SUCCESS") {
                         val convoyId = resp["convoy_id"]?.toString()
                         tvConvoyId.text = "Convoy: $convoyId"
+                        activeConvoyId = convoyId
+                        btnStart.visibility = View.GONE
+                        btnEnd.visibility = View.VISIBLE
+
+                        val svc = Intent(this@MainActivity, ConvoyLocationService::class.java)
+                        if (android.os.Build.VERSION.SDK_INT >= 26) {
+                            startForegroundService(svc)
+                        } else {
+                            startService(svc)
+                        }
+
+
                         android.widget.Toast.makeText(this@MainActivity, "Convoy started", android.widget.Toast.LENGTH_SHORT).show()
                         // later: start foreground service here
                     } else {
@@ -135,19 +140,57 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+        btnEnd.setOnClickListener {
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("End Convoy?")
+                .setMessage("Are you sure you want to end this convoy?")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("End") { _, _ ->
+                    lifecycleScope.launch {
+                        val username = store.username.first()
+                        val sessionKey = store.sessionKey.first()
+                        val convoyId = activeConvoyId
 
+                        if (username != null && sessionKey != null && convoyId != null) {
+                            try {
+                                val resp = ApiClient.api.convoy(
+                                    action = "END",
+                                    username = username,
+                                    sessionKey = sessionKey,
+                                    convoyId = convoyId
+                                )
+
+                                if (resp["status"]?.toString() == "SUCCESS") {
+                                    stopService(Intent(this@MainActivity, ConvoyLocationService::class.java))
+                                    activeConvoyId = null
+                                    tvConvoyId.text = ""
+                                    btnEnd.visibility = View.GONE
+                                    btnStart.visibility = View.VISIBLE
+                                    android.widget.Toast.makeText(this@MainActivity, "Convoy ended", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            } catch (e: Exception) {
+                                android.widget.Toast.makeText(this@MainActivity, "Error ending convoy", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                }
+                .show()
+        }
         btnJoin.setOnClickListener {
             // required button exists, but allowed to be incomplete for now
             android.widget.Toast.makeText(this, "Join convoy (not implemented yet)", android.widget.Toast.LENGTH_SHORT).show()
         }
 
         btnLeave.setOnClickListener {
-            // required button exists, but allowed to be incomplete for now
             androidx.appcompat.app.AlertDialog.Builder(this)
                 .setTitle("Leave convoy?")
-                .setMessage("This feature will be completed later.")
+                .setMessage("Stop sharing location and leave this convoy?")
                 .setNegativeButton("Cancel", null)
-                .setPositiveButton("OK", null)
+                .setPositiveButton("OK") { _, _ ->
+                    stopService(Intent(this@MainActivity, ConvoyLocationService::class.java))
+                    activeConvoyId = null
+                    tvConvoyId.text = ""
+                }
                 .show()
         }
 
@@ -156,6 +199,40 @@ class MainActivity : AppCompatActivity() {
             gMap = map
             ensureLocationPermissionAndStart()
         }
+
+        lifecycleScope.launch {
+            val username = store.username.first()
+            val sessionKey = store.sessionKey.first()
+
+            if (username != null && sessionKey != null) {
+                try {
+                    val resp = ApiClient.api.convoy(
+                        action = "QUERY",
+                        username = username,
+                        sessionKey = sessionKey,
+                        convoyId = null
+                    )
+
+                    if (resp["status"]?.toString() == "SUCCESS") {
+                        val convoyId = resp["convoy_id"]?.toString()
+                        val isActive = resp["active"]?.toString()?.toBoolean() ?: false
+
+                        if (isActive && convoyId != null) {
+                            activeConvoyId = convoyId
+                            tvConvoyId.text = "Convoy: $convoyId"
+                            btnStart.visibility = View.GONE
+                            btnEnd.visibility = View.VISIBLE
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Ignore - no active convoy
+                }
+            }
+
+
+    }
+
+
 
 
     }
@@ -263,11 +340,13 @@ class MainActivity : AppCompatActivity() {
 
                             store.saveLogin(user, first, last, sessionKey)
 
-                            android.widget.Toast.makeText(this@MainActivity, "Account created!", android.widget.Toast.LENGTH_SHORT).show()
+                            runOnUiThread {
+                                android.widget.Toast.makeText(this@MainActivity, "Account created!", android.widget.Toast.LENGTH_SHORT).show()
 
-                            dialog.dismiss()
-                            showMainPlaceholder()
-                        } else {
+                                dialog.dismiss()
+                                showMainPlaceholder()
+                            }
+                        }else {
                             val message = response["message"].toString()
                             android.widget.Toast.makeText(this@MainActivity, message, android.widget.Toast.LENGTH_LONG).show()
                         }
@@ -325,20 +404,20 @@ class MainActivity : AppCompatActivity() {
 
                             val sessionKey = response["session_key"].toString()
 
-                            // We don’t get first/last from LOGIN,
-                            // so store null for now
                             store.saveLogin(user, null, null, sessionKey)
 
-                            android.widget.Toast.makeText(
-                                this@MainActivity,
-                                "Login successful!",
-                                android.widget.Toast.LENGTH_SHORT
-                            ).show()
+                            runOnUiThread {
+                                android.widget.Toast.makeText(
+                                    this@MainActivity,
+                                    "Login successful!",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
 
-                            dialog.dismiss()
-                            showMainPlaceholder()
+                                dialog.dismiss()
+                                showMainPlaceholder()
+                            }
 
-                        } else {
+                        }else {
                             val message = response["message"]?.toString()
                             android.widget.Toast.makeText(
                                 this@MainActivity,
@@ -360,6 +439,44 @@ class MainActivity : AppCompatActivity() {
 
         dialog.show()
     }
+    private val locationReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != ConvoyLocationService.ACTION_LOCATION) return
+
+            val lat = intent.getDoubleExtra(ConvoyLocationService.EXTRA_LAT, 0.0)
+            val lng = intent.getDoubleExtra(ConvoyLocationService.EXTRA_LNG, 0.0)
+            val pos = LatLng(lat, lng)
+
+            if (userMarker == null) {
+                userMarker = gMap?.addMarker(MarkerOptions().position(pos).title("You"))
+                gMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(pos, 15f))
+            } else {
+                userMarker?.position = pos
+            }
+        }
+    }
+    override fun onStart() {
+        super.onStart()
+
+        val filter = IntentFilter(ConvoyLocationService.ACTION_LOCATION)
+
+        ContextCompat.registerReceiver(
+            this,
+            locationReceiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+    }
+
+
+    override fun onStop() {
+        super.onStop()
+        unregisterReceiver(locationReceiver)
+    }
+
+
+
+
 
 
 
