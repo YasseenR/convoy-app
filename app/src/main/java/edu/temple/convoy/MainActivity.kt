@@ -28,6 +28,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.first
 import edu.temple.convoy.ApiClient
+import androidx.appcompat.app.AlertDialog
 
 
 class MainActivity : AppCompatActivity() {
@@ -40,7 +41,25 @@ class MainActivity : AppCompatActivity() {
     private val fused by lazy { LocationServices.getFusedLocationProviderClient(this) }
     private var activeConvoyId: String? = null
 
+    private fun setConvoyUI(convoyId: String?, tv: TextView, btnStart: Button, btnEnd: Button) {
+        if (!convoyId.isNullOrBlank()) {
+            activeConvoyId = convoyId
+            tv.text = "Convoy: $convoyId"
+            btnStart.visibility = View.GONE
+            btnEnd.visibility = View.VISIBLE
+        } else {
+            activeConvoyId = null
+            tv.text = "No convoy"
+            btnEnd.visibility = View.GONE
+            btnStart.visibility = View.VISIBLE
+        }
+    }
 
+    private fun startConvoyService() {
+        val svc = Intent(this@MainActivity, ConvoyLocationService::class.java)
+        if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(svc)
+        else startService(svc)
+    }
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -92,6 +111,7 @@ class MainActivity : AppCompatActivity() {
         val btnJoin = findViewById<Button>(R.id.btnJoinConvoy)
         val btnLeave = findViewById<Button>(R.id.btnLeaveConvoy)
         val btnEnd = findViewById<Button>(R.id.btnEndConvoy)
+
         findViewById<Button>(R.id.btnLogout).setOnClickListener {
             restartToAuth()
         }
@@ -162,12 +182,10 @@ class MainActivity : AppCompatActivity() {
 
                                 if (resp["status"]?.toString() == "SUCCESS") {
                                     stopService(Intent(this@MainActivity, ConvoyLocationService::class.java))
-                                    activeConvoyId = null
-                                    tvConvoyId.text = ""
-                                    btnEnd.visibility = View.GONE
-                                    btnStart.visibility = View.VISIBLE
+                                    setConvoyUI(null, tvConvoyId, btnStart, btnEnd)
                                     android.widget.Toast.makeText(this@MainActivity, "Convoy ended", android.widget.Toast.LENGTH_SHORT).show()
                                 }
+
                             } catch (e: Exception) {
                                 android.widget.Toast.makeText(this@MainActivity, "Error ending convoy", android.widget.Toast.LENGTH_SHORT).show()
                             }
@@ -177,22 +195,40 @@ class MainActivity : AppCompatActivity() {
                 .show()
         }
         btnJoin.setOnClickListener {
-            // required button exists, but allowed to be incomplete for now
-            android.widget.Toast.makeText(this, "Join convoy (not implemented yet)", android.widget.Toast.LENGTH_SHORT).show()
+            val input = android.widget.EditText(this)
+            input.hint = "Enter convoy id"
+
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Join Convoy")
+                .setView(input)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Join") { _, _ ->
+                    val id = input.text.toString().trim()
+                    if (id.isEmpty()) {
+                        android.widget.Toast.makeText(this, "Enter a convoy id", android.widget.Toast.LENGTH_SHORT).show()
+                        return@setPositiveButton
+                    }
+
+                    // feature can be incomplete, but UI must behave:
+                    setConvoyUI(id, tvConvoyId, btnStart, btnEnd)
+                    startConvoyService()
+                }
+                .show()
         }
 
+
         btnLeave.setOnClickListener {
-            androidx.appcompat.app.AlertDialog.Builder(this)
+            AlertDialog.Builder(this)
                 .setTitle("Leave convoy?")
                 .setMessage("Stop sharing location and leave this convoy?")
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("OK") { _, _ ->
                     stopService(Intent(this@MainActivity, ConvoyLocationService::class.java))
-                    activeConvoyId = null
-                    tvConvoyId.text = ""
+                    setConvoyUI(null, tvConvoyId, btnStart, btnEnd)
                 }
                 .show()
         }
+
 
         val mapFrag = supportFragmentManager.findFragmentById(R.id.mapFragment) as SupportMapFragment
         mapFrag.getMapAsync { map ->
@@ -218,10 +254,9 @@ class MainActivity : AppCompatActivity() {
                         val isActive = resp["active"]?.toString()?.toBoolean() ?: false
 
                         if (isActive && convoyId != null) {
-                            activeConvoyId = convoyId
-                            tvConvoyId.text = "Convoy: $convoyId"
-                            btnStart.visibility = View.GONE
-                            btnEnd.visibility = View.VISIBLE
+                            setConvoyUI(convoyId, tvConvoyId, btnStart, btnEnd)
+                            startConvoyService()
+
                         }
                     }
                 } catch (e: Exception) {
