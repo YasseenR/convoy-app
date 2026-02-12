@@ -1,6 +1,6 @@
 package edu.temple.convoy
 
-
+import android.widget.TextView
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.core.app.ActivityCompat
@@ -73,6 +73,11 @@ class MainActivity : AppCompatActivity() {
     private fun showMainPlaceholder(){
         setContentView(R.layout.activity_main)
         //this become the map screen
+        val tvConvoyId = findViewById<android.widget.TextView>(R.id.tvConvoyId)
+        val btnStart = findViewById<Button>(R.id.btnStartConvoy)
+        val btnJoin = findViewById<Button>(R.id.btnJoinConvoy)
+        val btnLeave = findViewById<Button>(R.id.btnLeaveConvoy)
+
         findViewById<Button>(R.id.btnLogout).setOnClickListener {
             lifecycleScope.launch {
                 val username = store.username.first()
@@ -98,6 +103,54 @@ class MainActivity : AppCompatActivity() {
                 showAuthChoice()
             }
         }
+        btnStart.setOnClickListener {
+            lifecycleScope.launch {
+                val username = store.username.first()
+                val sessionKey = store.sessionKey.first()
+
+                if (username == null || sessionKey == null) {
+                    android.widget.Toast.makeText(this@MainActivity, "Not logged in", android.widget.Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                try {
+                    val resp = ApiClient.api.convoy(
+                        action = "CREATE",
+                        username = username,
+                        sessionKey = sessionKey,
+                        convoyId = null
+                    )
+
+                    val status = resp["status"]?.toString()
+                    if (status == "SUCCESS") {
+                        val convoyId = resp["convoy_id"]?.toString()
+                        tvConvoyId.text = "Convoy: $convoyId"
+                        android.widget.Toast.makeText(this@MainActivity, "Convoy started", android.widget.Toast.LENGTH_SHORT).show()
+                        // later: start foreground service here
+                    } else {
+                        android.widget.Toast.makeText(this@MainActivity, resp["message"]?.toString() ?: "Error", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                } catch (e: Exception) {
+                    android.widget.Toast.makeText(this@MainActivity, "Network error", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+
+        btnJoin.setOnClickListener {
+            // required button exists, but allowed to be incomplete for now
+            android.widget.Toast.makeText(this, "Join convoy (not implemented yet)", android.widget.Toast.LENGTH_SHORT).show()
+        }
+
+        btnLeave.setOnClickListener {
+            // required button exists, but allowed to be incomplete for now
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Leave convoy?")
+                .setMessage("This feature will be completed later.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("OK", null)
+                .show()
+        }
+
         val mapFrag = supportFragmentManager.findFragmentById(R.id.mapFragment) as SupportMapFragment
         mapFrag.getMapAsync { map ->
             gMap = map

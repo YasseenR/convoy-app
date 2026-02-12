@@ -14,5 +14,12 @@ interface ConvoyApi {
         @Field("lastname") lastname: String?,
         @Field("session_key") sessionKey: String?
     ): Map<String, Any>
-
+    @FormUrlEncoded
+    @POST("convoy.php")
+    suspend fun convoy(
+        @Field("action") action: String,
+        @Field("username") username: String,
+        @Field("session_key") sessionKey: String,
+        @Field("convoy_id") convoyId: String? = null
+    ): Map<String, Any>
 }
