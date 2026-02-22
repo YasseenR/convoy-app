@@ -9,6 +9,11 @@ import android.os.IBinder
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import com.google.android.gms.location.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
+
 
 class ConvoyLocationService : Service() {
 
@@ -25,8 +30,13 @@ class ConvoyLocationService : Service() {
     private lateinit var fused: FusedLocationProviderClient
     private lateinit var callback: LocationCallback
 
+    private val serviceScope = CoroutineScope(Dispatchers.IO)
+    private lateinit var store: SessionStore
+
+
     override fun onCreate() {
         super.onCreate()
+        store = SessionStore(this)
         fused = LocationServices.getFusedLocationProviderClient(this)
 
         createNotificationChannel()
@@ -41,6 +51,25 @@ class ConvoyLocationService : Service() {
                     putExtra(EXTRA_LNG, loc.longitude)
                 }
                 sendBroadcast(i)
+                // Also report location to server
+                serviceScope.launch {
+                    try {
+                        val username = store.username.first() ?: return@launch
+                        val sessionKey = store.sessionKey.first() ?: return@launch
+                        val convoyId = store.convoyId.first() ?: return@launch
+
+                        ApiClient.api.convoy(
+                            action = "UPDATE",
+                            username = username,
+                            sessionKey = sessionKey,
+                            convoyId = convoyId,
+                            latitude = loc.latitude,
+                            longitude = loc.longitude
+                        )
+                    } catch (e: Exception) {
+                        // Silently ignore - don't crash the service
+                    }
+                }
             }
         }
     }

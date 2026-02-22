@@ -10,6 +10,7 @@ interface ConvoyApi {
         @Field("action") action: String,
         @Field("username") username: String,
         @Field("password") password: String?,
+        @Field("fcm_token") fcmToken: String?,
         @Field("firstname") firstname: String?,
         @Field("lastname") lastname: String?,
         @Field("session_key") sessionKey: String?
@@ -20,6 +21,8 @@ interface ConvoyApi {
         @Field("action") action: String,
         @Field("username") username: String,
         @Field("session_key") sessionKey: String,
-        @Field("convoy_id") convoyId: String? = null
+        @Field("convoy_id") convoyId: String? = null,
+        @Field("latitude") latitude: Double? = null,
+        @Field("longitude") longitude: Double? = null
     ): Map<String, Any>
 }

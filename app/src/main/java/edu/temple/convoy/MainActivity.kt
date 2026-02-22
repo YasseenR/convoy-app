@@ -139,6 +139,7 @@ class MainActivity : AppCompatActivity() {
                         val convoyId = resp["convoy_id"]?.toString()
                         tvConvoyId.text = "Convoy: $convoyId"
                         activeConvoyId = convoyId
+                        store.saveConvoyId(convoyId)
                         btnStart.visibility = View.GONE
                         btnEnd.visibility = View.VISIBLE
 
@@ -161,44 +162,38 @@ class MainActivity : AppCompatActivity() {
             }
         }
         btnEnd.setOnClickListener {
-            androidx.appcompat.app.AlertDialog.Builder(this)
+            AlertDialog.Builder(this)
                 .setTitle("End Convoy?")
                 .setMessage("Are you sure you want to end this convoy?")
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("End") { _, _ ->
                     lifecycleScope.launch {
-                        val username = store.username.first()
-                        val sessionKey = store.sessionKey.first()
-                        val convoyId = activeConvoyId
-
-                        if (username != null && sessionKey != null && convoyId != null) {
-                            try {
-                                val resp = ApiClient.api.convoy(
-                                    action = "END",
-                                    username = username,
-                                    sessionKey = sessionKey,
-                                    convoyId = convoyId
-                                )
-
-                                if (resp["status"]?.toString() == "SUCCESS") {
-                                    stopService(Intent(this@MainActivity, ConvoyLocationService::class.java))
-                                    setConvoyUI(null, tvConvoyId, btnStart, btnEnd)
-                                    android.widget.Toast.makeText(this@MainActivity, "Convoy ended", android.widget.Toast.LENGTH_SHORT).show()
-                                }
-
-                            } catch (e: Exception) {
-                                android.widget.Toast.makeText(this@MainActivity, "Error ending convoy", android.widget.Toast.LENGTH_SHORT).show()
+                        val username = store.username.first() ?: return@launch
+                        val sessionKey = store.sessionKey.first() ?: return@launch
+                        val convoyId = activeConvoyId ?: return@launch
+                        try {
+                            val resp = ApiClient.api.convoy(
+                                action = "END",
+                                username = username,
+                                sessionKey = sessionKey,
+                                convoyId = convoyId
+                            )
+                            if (resp["status"]?.toString() == "SUCCESS") {
+                                store.saveConvoyId(null)
+                                stopService(Intent(this@MainActivity, ConvoyLocationService::class.java))
+                                setConvoyUI(null, tvConvoyId, btnStart, btnEnd)
+                                android.widget.Toast.makeText(this@MainActivity, "Convoy ended", android.widget.Toast.LENGTH_SHORT).show()
                             }
+                        } catch (e: Exception) {
+                            android.widget.Toast.makeText(this@MainActivity, "Error ending convoy", android.widget.Toast.LENGTH_SHORT).show()
                         }
                     }
-                }
-                .show()
+                }.show()
         }
         btnJoin.setOnClickListener {
             val input = android.widget.EditText(this)
             input.hint = "Enter convoy id"
-
-            androidx.appcompat.app.AlertDialog.Builder(this)
+            AlertDialog.Builder(this)
                 .setTitle("Join Convoy")
                 .setView(input)
                 .setNegativeButton("Cancel", null)
@@ -208,14 +203,31 @@ class MainActivity : AppCompatActivity() {
                         android.widget.Toast.makeText(this, "Enter a convoy id", android.widget.Toast.LENGTH_SHORT).show()
                         return@setPositiveButton
                     }
-
-                    // feature can be incomplete, but UI must behave:
-                    setConvoyUI(id, tvConvoyId, btnStart, btnEnd)
-                    startConvoyService()
-                }
-                .show()
+                    lifecycleScope.launch {
+                        val username = store.username.first() ?: return@launch
+                        val sessionKey = store.sessionKey.first() ?: return@launch
+                        try {
+                            val resp = ApiClient.api.convoy(
+                                action = "JOIN",
+                                username = username,
+                                sessionKey = sessionKey,
+                                convoyId = id
+                            )
+                            if (resp["status"]?.toString() == "SUCCESS") {
+                                store.saveConvoyId(id)
+                                setConvoyUI(id, tvConvoyId, btnStart, btnEnd)
+                                startConvoyService()
+                            } else {
+                                android.widget.Toast.makeText(this@MainActivity,
+                                    resp["message"]?.toString() ?: "Error joining",
+                                    android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        } catch (e: Exception) {
+                            android.widget.Toast.makeText(this@MainActivity, "Network error", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }.show()
         }
-
 
         btnLeave.setOnClickListener {
             AlertDialog.Builder(this)
@@ -223,10 +235,23 @@ class MainActivity : AppCompatActivity() {
                 .setMessage("Stop sharing location and leave this convoy?")
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("OK") { _, _ ->
-                    stopService(Intent(this@MainActivity, ConvoyLocationService::class.java))
-                    setConvoyUI(null, tvConvoyId, btnStart, btnEnd)
-                }
-                .show()
+                    lifecycleScope.launch {
+                        val username = store.username.first() ?: return@launch
+                        val sessionKey = store.sessionKey.first() ?: return@launch
+                        val convoyId = activeConvoyId ?: return@launch
+                        try {
+                            ApiClient.api.convoy(
+                                action = "LEAVE",
+                                username = username,
+                                sessionKey = sessionKey,
+                                convoyId = convoyId
+                            )
+                        } catch (e: Exception) { }
+                        store.saveConvoyId(null)
+                        stopService(Intent(this@MainActivity, ConvoyLocationService::class.java))
+                        setConvoyUI(null, tvConvoyId, btnStart, btnEnd)
+                    }
+                }.show()
         }
 
 
@@ -367,7 +392,9 @@ class MainActivity : AppCompatActivity() {
                             password = pass,
                             firstname = first,
                             lastname = last,
+                            fcmToken = null,
                             sessionKey = null
+
                         )
                         val status = response["status"]?.toString()
                         if (status == "SUCCESS") {
@@ -429,6 +456,7 @@ class MainActivity : AppCompatActivity() {
                             username = user,
                             password = pass,
                             firstname = null,
+                            fcmToken = null,
                             lastname = null,
                             sessionKey = null
                         )
