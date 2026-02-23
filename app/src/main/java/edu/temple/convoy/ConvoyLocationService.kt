@@ -6,9 +6,12 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.google.android.gms.location.*
+import com.google.android.gms.location.FusedLocationProviderClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -43,7 +46,16 @@ class ConvoyLocationService : Service() {
 
         callback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
+
+                for (location in result.locations) {
+                    Log.d(
+                        "ConvoyLocation",
+                        "lat=${location.latitude}, lng=${location.longitude}, speed=${location.speed}"
+                    )
+                }
+
                 val loc = result.lastLocation ?: return
+
 
                 // Send location to activity
                 val i = Intent(ACTION_LOCATION).apply {
@@ -93,7 +105,8 @@ class ConvoyLocationService : Service() {
 
         // Requirement: updates whenever moved 10 meters
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000L)
-            .setMinUpdateDistanceMeters(10f)
+            .setMinUpdateIntervalMillis(1500)
+            .setWaitForAccurateLocation(false)
             .build()
 
         fused.requestLocationUpdates(request, callback, mainLooper)
