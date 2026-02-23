@@ -61,6 +61,7 @@ class ConvoyLocationService : Service() {
                 val i = Intent(ACTION_LOCATION).apply {
                     putExtra(EXTRA_LAT, loc.latitude)
                     putExtra(EXTRA_LNG, loc.longitude)
+                    setPackage(packageName)
                 }
                 sendBroadcast(i)
                 // Also report location to server
@@ -89,7 +90,7 @@ class ConvoyLocationService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Start foreground immediately
         startForeground(NOTIF_ID, buildNotification())
-
+        Log.d("ConvoyLocation", "Service started")
         startLocationUpdates()
         return START_STICKY
     }
@@ -99,14 +100,14 @@ class ConvoyLocationService : Service() {
         val coarse = ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION)
         if (fine != PackageManager.PERMISSION_GRANTED && coarse != PackageManager.PERMISSION_GRANTED) {
             // Permission not granted -> stop service so it doesn't crash
+            Log.d("ConvoyLocation", "No Permission")
             stopSelf()
             return
         }
-
+        Log.d("ConvoyLocation", "Permissions")
         // Requirement: updates whenever moved 10 meters
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 2000L)
             .setMinUpdateIntervalMillis(1500)
-            .setWaitForAccurateLocation(false)
             .build()
 
         fused.requestLocationUpdates(request, callback, mainLooper)

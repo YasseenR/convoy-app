@@ -1,6 +1,7 @@
 package edu.temple.convoy
 
 import android.R.id.message
+import android.content.Intent
 import android.util.Log
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
@@ -10,6 +11,11 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 class MyFirebaseMessagingService: FirebaseMessagingService() {
+
+    companion object {
+        const val ACTION_CONVOY_UPDATE = "edu.temple.convoy.CONVOY_UPDATE"
+        const val EXTRA_PAYLOAD = "payload"
+    }
     override fun onNewToken(token: String) {
         super.onNewToken(token)
 
@@ -28,15 +34,12 @@ class MyFirebaseMessagingService: FirebaseMessagingService() {
         super.onMessageReceived(remoteMessage)
 
 
-        val payload = remoteMessage.data["payload"] ?: return
-
-        try {
-            val json = JSONObject(payload)
-            val action = json.getString("action")
+        remoteMessage.data["payload"]?.let { payload ->
+            val intent = Intent(ACTION_CONVOY_UPDATE).apply {
+                putExtra(EXTRA_PAYLOAD, payload)
+                setPackage(packageName)
+            }
+            sendBroadcast(intent)
         }
-    }
-
-    private fun sendRegistrationToServer(token: String) {
-        // TODO: send token to backend / Firestore / API
     }
 }

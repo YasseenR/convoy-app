@@ -34,11 +34,16 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.first
 import edu.temple.convoy.ApiClient
 import androidx.appcompat.app.AlertDialog
+import androidx.core.content.ContextCompat.registerReceiver
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
+import com.google.android.gms.maps.model.LatLngBounds
 import com.google.android.gms.tasks.OnCompleteListener
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 
 
 class MainActivity : AppCompatActivity() {
@@ -50,6 +55,8 @@ class MainActivity : AppCompatActivity() {
     private val LOCATION_REQ = 1001
     private val fused by lazy { LocationServices.getFusedLocationProviderClient(this) }
     private var activeConvoyId: String? = null
+
+    private val convoyMarkers = mutableMapOf<String, Marker>()
 
     private fun setConvoyUI(convoyId: String?, tv: TextView, btnStart: Button, btnEnd: Button) {
         if (!convoyId.isNullOrBlank()) {
@@ -71,10 +78,78 @@ class MainActivity : AppCompatActivity() {
         else startService(svc)
     }
 
+    private val convoyUpdateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val payload = intent.getStringExtra(MyFirebaseMessagingService.EXTRA_PAYLOAD) ?: return
+            val json = JSONObject(payload)
+            val action = json.optString("action")
+
+            if (action == "UPDATE") {
+                val dataArray = json.getJSONArray("data")
+                updateConvoyMarkers(dataArray)
+            } else if (action == "END"){
+                handleConvoyEnd()
+            }
+        }
+    }
+
+    private fun updateConvoyMarkers(data: JSONArray) {
+        val currentUsersInPayload = mutableSetOf<String>()
+        val builder = LatLngBounds.Builder()
+
+        // Add your own position to the camera bounds
+        userMarker?.position?.let { builder.include(it) }
+
+        lifecycleScope.launch {
+            val myUsername = store.username.first()
+
+            for (i in 0 until data.length()) {
+                val userJson = data.getJSONObject(i)
+                val username = userJson.getString("username")
+
+                // 1. Skip yourself
+                if (username == myUsername) continue
+
+                currentUsersInPayload.add(username)
+                val lat = userJson.getDouble("latitude")
+                val lng = userJson.getDouble("longitude")
+                val pos = LatLng(lat, lng)
+                builder.include(pos)
+
+                // 2. Add or Update Marker
+                if (convoyMarkers.containsKey(username)) {
+                    convoyMarkers[username]?.position = pos
+                } else {
+                    val marker = gMap?.addMarker(MarkerOptions()
+                        .position(pos)
+                        .title(username) // Use name/username as title
+                        .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE))
+                    )
+                    if (marker != null) convoyMarkers[username] = marker
+                }
+            }
+
+            // 4. Remove users who left (Cleanup)
+            val iterator = convoyMarkers.entries.iterator()
+            while (iterator.hasNext()) {
+                val entry = iterator.next()
+                if (!currentUsersInPayload.contains(entry.key)) {
+                    entry.value.remove() // Remove from map
+                    iterator.remove()    // Remove from our tracking map
+                }
+            }
+
+            // 3. Ensure all users are visible
+            if (data.length() > 0) {
+                val bounds = builder.build()
+                gMap?.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, 100))
+            }
+        }
+    }
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         store = SessionStore(this)
 
         lifecycleScope.launch {
@@ -315,7 +390,7 @@ class MainActivity : AppCompatActivity() {
                         val convoyId = resp["convoy_id"]?.toString()
                         val isActive = resp["active"]?.toString()?.toBoolean() ?: false
 
-                        if (isActive && convoyId != null) {
+                        if (isActive || convoyId != null) {
                             setConvoyUI(convoyId, tvConvoyId, btnStart, btnEnd)
                             startConvoyService()
 
@@ -405,7 +480,7 @@ class MainActivity : AppCompatActivity() {
         fused.lastLocation
             .addOnSuccessListener { loc ->
                 if (loc == null) return@addOnSuccessListener
-
+                Log.d("ConvoyLocation", "Listening")
                 val pos = LatLng(loc.latitude, loc.longitude)
 
                 if (userMarker == null) {
@@ -416,7 +491,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             .addOnFailureListener {
-                //  Toast/log
+                Log.d("ConvoyLocation", "Failed")
             }
     }
 
@@ -583,24 +658,26 @@ class MainActivity : AppCompatActivity() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != ConvoyLocationService.ACTION_LOCATION) return
 
-            val lat = intent.getDoubleExtra(ConvoyLocationService.EXTRA_LAT, 10.0)
-            val lng = intent.getDoubleExtra(ConvoyLocationService.EXTRA_LNG, 10.0)
+            val lat = intent.getDoubleExtra(ConvoyLocationService.EXTRA_LAT, 0.0)
+            val lng = intent.getDoubleExtra(ConvoyLocationService.EXTRA_LNG, 0.0)
             val pos = LatLng(lat, lng)
-
-            if (userMarker == null) {
-                userMarker = gMap?.addMarker(MarkerOptions().position(pos).title("You"))
-                gMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(pos, 15f))
-            } else {
-                userMarker?.position = pos
+            runOnUiThread {
+                if (userMarker == null) {
+                    userMarker = gMap?.addMarker(MarkerOptions()
+                        .position(pos)
+                        .title("You"))
+                    gMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(pos, 15f))
+                } else {
+                    userMarker?.position = pos
+                    gMap?.moveCamera(CameraUpdateFactory.newLatLngZoom(pos, 15f))
+                }
             }
         }
     }
     override fun onStart() {
         super.onStart()
-
         val filter = IntentFilter(ConvoyLocationService.ACTION_LOCATION)
-
-        ContextCompat.registerReceiver(
+        registerReceiver(
             this,
             locationReceiver,
             filter,
