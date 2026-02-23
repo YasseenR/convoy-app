@@ -32,14 +32,18 @@ class MyFirebaseMessagingService: FirebaseMessagingService() {
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         super.onMessageReceived(remoteMessage)
-
+        Log.d("FCM", "Message Received")
 
         remoteMessage.data["payload"]?.let { payload ->
             val intent = Intent(ACTION_CONVOY_UPDATE).apply {
                 putExtra(EXTRA_PAYLOAD, payload)
                 setPackage(packageName)
             }
+
+            Log.d("FCM", "Refreshed token: $payload")
             sendBroadcast(intent)
         }
+
+
     }
 }

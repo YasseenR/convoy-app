@@ -83,7 +83,7 @@ class MainActivity : AppCompatActivity() {
             val payload = intent.getStringExtra(MyFirebaseMessagingService.EXTRA_PAYLOAD) ?: return
             val json = JSONObject(payload)
             val action = json.optString("action")
-
+            Log.d("FCM", "Update REceived $payload")
             if (action == "UPDATE") {
                 val dataArray = json.getJSONArray("data")
                 updateConvoyMarkers(dataArray)
@@ -97,7 +97,6 @@ class MainActivity : AppCompatActivity() {
         val currentUsersInPayload = mutableSetOf<String>()
         val builder = LatLngBounds.Builder()
 
-        // Add your own position to the camera bounds
         userMarker?.position?.let { builder.include(it) }
 
         lifecycleScope.launch {
@@ -107,7 +106,6 @@ class MainActivity : AppCompatActivity() {
                 val userJson = data.getJSONObject(i)
                 val username = userJson.getString("username")
 
-                // 1. Skip yourself
                 if (username == myUsername) continue
 
                 currentUsersInPayload.add(username)
@@ -116,35 +114,48 @@ class MainActivity : AppCompatActivity() {
                 val pos = LatLng(lat, lng)
                 builder.include(pos)
 
-                // 2. Add or Update Marker
                 if (convoyMarkers.containsKey(username)) {
                     convoyMarkers[username]?.position = pos
                 } else {
                     val marker = gMap?.addMarker(MarkerOptions()
                         .position(pos)
-                        .title(username) // Use name/username as title
+                        .title(username)
                         .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE))
                     )
                     if (marker != null) convoyMarkers[username] = marker
                 }
             }
 
-            // 4. Remove users who left (Cleanup)
             val iterator = convoyMarkers.entries.iterator()
             while (iterator.hasNext()) {
                 val entry = iterator.next()
                 if (!currentUsersInPayload.contains(entry.key)) {
-                    entry.value.remove() // Remove from map
-                    iterator.remove()    // Remove from our tracking map
+                    entry.value.remove()
+                    iterator.remove()
                 }
             }
 
-            // 3. Ensure all users are visible
             if (data.length() > 0) {
                 val bounds = builder.build()
                 gMap?.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, 100))
             }
         }
+    }
+
+    private fun handleConvoyEnd() {
+        // Stop the location service
+        stopService(Intent(this, ConvoyLocationService::class.java))
+
+        // Clear all markers
+        convoyMarkers.values.forEach { it.remove() }
+        convoyMarkers.clear()
+
+        // Reset UI
+        lifecycleScope.launch {
+            store.saveConvoyId(null)
+            // Update your TextViews/Buttons here
+        }
+        Toast.makeText(this, "Convoy has ended", Toast.LENGTH_LONG).show()
     }
 
 
@@ -397,7 +408,6 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 } catch (e: Exception) {
-                    // Ignore - no active convoy
                 }
             }
 
