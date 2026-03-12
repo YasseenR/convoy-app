@@ -41,6 +41,7 @@ import com.google.android.gms.tasks.OnCompleteListener
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -163,6 +164,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         store = SessionStore(this)
 
+        Log.d("FCM", "FCM Token Stored ${store.fcmToken}")
         lifecycleScope.launch {
             val key = store.sessionKey.first()
             if (key == null) {
@@ -368,7 +370,20 @@ class MainActivity : AppCompatActivity() {
             lifecycleScope.launch {
                 val username = store.username.first()
                 val sessionKey = store.sessionKey.first()
-                val fcmToken = store.fcmToken.first()
+                var fcmToken = store.fcmToken.first()
+
+                // 2. If it's null, ask Firebase directly
+                if (fcmToken == null) {
+                    try {
+                        // This fetches the current token from the Google Play Services task
+                        val tokenTask = FirebaseMessaging.getInstance().token.await()
+                        fcmToken = tokenTask
+                        // Save it so it's not null next time
+                        store.saveFCMToken(fcmToken)
+                    } catch (e: Exception) {
+                        Log.e("FCMUpdate", "Could not fetch token from Firebase", e)
+                    }
+                }
 
                 if (username != null && sessionKey != null && fcmToken != null) {
                     try {
@@ -380,6 +395,8 @@ class MainActivity : AppCompatActivity() {
                     } catch (e: Exception) {
                         Log.e("FCMUpdate", "FCM Token Update failed", e)
                     }
+                } else {
+                    Log.d("FCMUpdate", "FCM Token Update failed ${fcmToken} ${username} ${sessionKey}")
                 }
             }
         }
