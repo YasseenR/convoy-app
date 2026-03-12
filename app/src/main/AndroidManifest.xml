@@ -29,7 +29,11 @@
             android:name=".ConvoyLocationService"
             android:exported="false"
             android:foregroundServiceType="location" />
-
+        <service android:name=".MyFirebaseMessagingService" android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
         <activity
             android:name="edu.temple.convoy.MainActivity"
             android:exported="true">

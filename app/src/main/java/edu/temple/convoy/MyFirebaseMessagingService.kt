@@ -40,7 +40,7 @@ class MyFirebaseMessagingService: FirebaseMessagingService() {
                 setPackage(packageName)
             }
 
-            Log.d("FCM", "Refreshed token: $payload")
+            Log.d("FCM", "Payload received: $payload")
             sendBroadcast(intent)
         }
 

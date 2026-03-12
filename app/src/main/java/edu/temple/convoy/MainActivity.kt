@@ -8,6 +8,10 @@ import android.content.IntentFilter
 import android.widget.TextView
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.media.AudioAttributes
+import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.os.Build
 import androidx.core.app.ActivityCompat
@@ -21,6 +25,7 @@ import com.google.android.gms.maps.model.MarkerOptions
 import com.google.android.gms.maps.CameraUpdateFactory
 import kotlinx.coroutines.launch
 import android.os.Bundle
+import android.util.Base64
 import android.util.Log
 import android.widget.Button
 import android.widget.EditText
@@ -39,11 +44,17 @@ import androidx.core.content.ContextCompat.registerReceiver
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.LatLngBounds
 import com.google.android.gms.tasks.OnCompleteListener
+import com.google.android.material.floatingactionbutton.FloatingActionButton
+import com.google.firebase.Firebase
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -65,6 +76,10 @@ class MainActivity : AppCompatActivity() {
     private var audioFile: File? = null
     private var isRecording = false
 
+    private var mediaPlayer: MediaPlayer? = null
+
+
+
     private fun startRecording() {
         audioFile = File(externalCacheDir?.absolutePath, "convoy_voice.m4a")
 
@@ -81,17 +96,70 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "Recording...", Toast.LENGTH_SHORT).show()
     }
 
-    private fun setConvoyUI(convoyId: String?, tv: TextView, btnStart: Button, btnEnd: Button) {
+    private fun stopRecording() {
+        recorder?.apply {
+            stop()
+            release()
+        }
+        recorder = null
+        isRecording = false
+
+        val fileToUpload = audioFile ?: return
+
+        //Toast.makeText(this, "Recording saved", Toast.LENGTH_SHORT).show()
+
+
+        lifecycleScope.launch {
+            try {
+                val username = store.username.first() ?: return@launch
+                val sessionKey = store.sessionKey.first() ?: return@launch
+                val convoyId = store.convoyId.first() ?: return@launch
+                // 1. Prepare the text fields as RequestBody
+                val actionBody = "MESSAGE".toRequestBody("text/plain".toMediaTypeOrNull())
+                val userBody = username.toRequestBody("text/plain".toMediaTypeOrNull())
+                val keyBody = sessionKey.toRequestBody("text/plain".toMediaTypeOrNull())
+                val idBody = convoyId.toRequestBody("text/plain".toMediaTypeOrNull())
+
+                // 2. Prepare the file part
+                // "audio/m4a" or "audio/*" matches the format you recorded in
+                val fileRequestBody = fileToUpload.asRequestBody("audio/m4a".toMediaTypeOrNull())
+                val filePart = MultipartBody.Part.createFormData("message_file", fileToUpload.name, fileRequestBody)
+
+                // 3. Call the new multipart function
+                val resp = ApiClient.api.convoyMessage(
+                    action = actionBody,
+                    username = userBody,
+                    sessionKey = keyBody,
+                    convoyId = idBody,
+                    message_file = filePart
+                )
+
+                if (resp["status"] == "SUCCESS") {
+                    Toast.makeText(this@MainActivity, "Voice message sent!", Toast.LENGTH_SHORT).show()
+                }
+
+                Log.d("AudioUpload", "${resp["status"]} ${resp["message"]}")
+
+            } catch (e: Exception) {
+                    Log.e("AudioUpload", "Error", e)
+                    Toast.makeText(this@MainActivity, "Failed to send audio", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun setConvoyUI(convoyId: String?, tv: TextView, btnStart: Button, btnEnd: Button, btnRecord: FloatingActionButton) {
         if (!convoyId.isNullOrBlank()) {
             activeConvoyId = convoyId
             tv.text = "Convoy: $convoyId"
             btnStart.visibility = View.GONE
             btnEnd.visibility = View.VISIBLE
+            btnRecord.show()
         } else {
             activeConvoyId = null
             tv.text = "No convoy"
             btnEnd.visibility = View.GONE
             btnStart.visibility = View.VISIBLE
+            btnRecord.hide()
         }
     }
 
@@ -101,20 +169,6 @@ class MainActivity : AppCompatActivity() {
         else startService(svc)
     }
 
-    private val convoyUpdateReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            val payload = intent.getStringExtra(MyFirebaseMessagingService.EXTRA_PAYLOAD) ?: return
-            val json = JSONObject(payload)
-            val action = json.optString("action")
-            Log.d("FCM", "Update REceived $payload")
-            if (action == "UPDATE") {
-                val dataArray = json.getJSONArray("data")
-                updateConvoyMarkers(dataArray)
-            } else if (action == "END"){
-                handleConvoyEnd()
-            }
-        }
-    }
 
     private fun updateConvoyMarkers(data: JSONArray) {
         val currentUsersInPayload = mutableSetOf<String>()
@@ -186,7 +240,6 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         store = SessionStore(this)
 
-        Log.d("FCM", "FCM Token Stored ${store.fcmToken}")
         lifecycleScope.launch {
             val key = store.sessionKey.first()
             if (key == null) {
@@ -231,9 +284,28 @@ class MainActivity : AppCompatActivity() {
         val btnJoin = findViewById<Button>(R.id.btnJoinConvoy)
         val btnLeave = findViewById<Button>(R.id.btnLeaveConvoy)
         val btnEnd = findViewById<Button>(R.id.btnEndConvoy)
+        val btnRecord = findViewById<FloatingActionButton>(R.id.btnRecord)
+
 
         findViewById<Button>(R.id.btnLogout).setOnClickListener {
             restartToAuth()
+        }
+
+        btnRecord.setOnClickListener {
+            if (!isRecording) {
+                if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                    startRecording()
+                    btnRecord.setImageResource(android.R.drawable.ic_media_pause)
+                    btnRecord.backgroundTintList = ColorStateList.valueOf(Color.RED)
+                } else {
+                    ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 200)
+                }
+            } else {
+                stopRecording()
+                btnRecord.setImageResource(android.R.drawable.ic_btn_speak_now)
+                btnRecord.backgroundTintList = ColorStateList.valueOf(Color.BLUE)
+
+            }
         }
 
         btnStart.setOnClickListener {
@@ -243,6 +315,9 @@ class MainActivity : AppCompatActivity() {
 
                 if (username == null || sessionKey == null) {
                     Toast.makeText(this@MainActivity, "Not logged in", Toast.LENGTH_SHORT).show()
+                    return@launch
+                } else if (isRecording == true) {
+                    Toast.makeText(this@MainActivity, "Currently recording voice", Toast.LENGTH_SHORT).show()
                     return@launch
                 }
 
@@ -263,6 +338,7 @@ class MainActivity : AppCompatActivity() {
                         store.saveCreatedConvoyId((convoyId))
                         btnStart.visibility = View.GONE
                         btnEnd.visibility = View.VISIBLE
+                        btnRecord.show()
 
                         val svc = Intent(this@MainActivity, ConvoyLocationService::class.java)
                         if (Build.VERSION.SDK_INT >= 26) {
@@ -302,7 +378,7 @@ class MainActivity : AppCompatActivity() {
                             if (resp["status"]?.toString() == "SUCCESS") {
                                 store.saveConvoyId(null)
                                 stopService(Intent(this@MainActivity, ConvoyLocationService::class.java))
-                                setConvoyUI(null, tvConvoyId, btnStart, btnEnd)
+                                setConvoyUI(null, tvConvoyId, btnStart, btnEnd, btnRecord)
                                 Toast.makeText(this@MainActivity, "Convoy ended", Toast.LENGTH_SHORT).show()
                             }
                         } catch (e: Exception) {
@@ -337,7 +413,7 @@ class MainActivity : AppCompatActivity() {
                             if (resp["status"]?.toString() == "SUCCESS") {
                                 store.saveConvoyId(id)
                                 store.saveCreatedConvoyId(null)
-                                setConvoyUI(id, tvConvoyId, btnStart, btnEnd)
+                                setConvoyUI(id, tvConvoyId, btnStart, btnEnd, btnRecord)
                                 startConvoyService()
                             } else {
                                 Toast.makeText(this@MainActivity,
@@ -378,7 +454,7 @@ class MainActivity : AppCompatActivity() {
                         store.saveConvoyId(null)
                         Log.d("LeaveTest", "Leave Success")
                         stopService(Intent(this@MainActivity, ConvoyLocationService::class.java))
-                        setConvoyUI(null, tvConvoyId, btnStart, btnEnd)
+                        setConvoyUI(null, tvConvoyId, btnStart, btnEnd, btnRecord)
                     }
                 }.show()
         }
@@ -392,7 +468,9 @@ class MainActivity : AppCompatActivity() {
             lifecycleScope.launch {
                 val username = store.username.first()
                 val sessionKey = store.sessionKey.first()
-                var fcmToken = store.fcmToken.first()
+                var fcmToken = FirebaseMessaging.getInstance().token.await()
+
+                store.saveFCMToken(fcmToken)
 
                 // 2. If it's null, ask Firebase directly
                 if (fcmToken == null) {
@@ -401,7 +479,7 @@ class MainActivity : AppCompatActivity() {
                         val tokenTask = FirebaseMessaging.getInstance().token.await()
                         fcmToken = tokenTask
                         // Save it so it's not null next time
-                        store.saveFCMToken(fcmToken)
+
                     } catch (e: Exception) {
                         Log.e("FCMUpdate", "Could not fetch token from Firebase", e)
                     }
@@ -413,7 +491,7 @@ class MainActivity : AppCompatActivity() {
                             "UPDATE", username, null, fcmToken,
                             null, null, sessionKey
                         )
-                        Log.d("FCMUpdate", "FCM Token Update Sent")
+                        Log.d("FCMUpdate", "FCM Token Update Sent ${fcmToken}")
                     } catch (e: Exception) {
                         Log.e("FCMUpdate", "FCM Token Update failed", e)
                     }
@@ -441,7 +519,7 @@ class MainActivity : AppCompatActivity() {
                         val isActive = resp["active"]?.toString()?.toBoolean() ?: false
 
                         if (isActive || convoyId != null) {
-                            setConvoyUI(convoyId, tvConvoyId, btnStart, btnEnd)
+                            setConvoyUI(convoyId, tvConvoyId, btnStart, btnEnd, btnRecord)
                             startConvoyService()
 
                         }
@@ -703,6 +781,66 @@ class MainActivity : AppCompatActivity() {
 
         dialog.show()
     }
+
+    private val convoyUpdateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != MyFirebaseMessagingService.ACTION_CONVOY_UPDATE) return
+
+            val payload = intent.getStringExtra(MyFirebaseMessagingService.EXTRA_PAYLOAD) ?: return
+
+            try {
+                val json = JSONObject(payload)
+                when (json.getString("action")) {
+                    "UPDATE" -> {
+                        val dataArray = json.getJSONArray("data")
+                        updateConvoyMarkers(dataArray)
+                    }
+                    "END" -> {
+                        handleConvoyEnd()
+                    }
+                    "MESSAGE" -> {
+                        val audioUrl = json.getString("message_file")
+                        val username = json.getString("username")
+
+                        playIncomingAudio(username, audioUrl)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("Convoy", "Error parsing FCM Payload", e)
+            }
+
+        }
+    }
+
+    private fun playIncomingAudio(sender: String, url: String) {
+        runOnUiThread {
+            Toast.makeText(this, "Voice message from $sender", Toast.LENGTH_SHORT).show()
+
+            try {
+                mediaPlayer?.release()
+                mediaPlayer = MediaPlayer().apply {
+                    setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .build()
+                    )
+                    setDataSource(url)
+                    prepareAsync()
+                    setOnPreparedListener {
+                        it.start()
+                    }
+
+                    setOnCompletionListener {
+                        it.release()
+                        mediaPlayer = null
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("ConvoyAudio", "Error playing audio URL", e)
+            }
+        }
+    }
     private val locationReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != ConvoyLocationService.ACTION_LOCATION) return
@@ -732,12 +870,16 @@ class MainActivity : AppCompatActivity() {
             filter,
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
+
+        val convoyFilter = IntentFilter(MyFirebaseMessagingService.ACTION_CONVOY_UPDATE)
+        registerReceiver(convoyUpdateReceiver, convoyFilter, RECEIVER_NOT_EXPORTED)
     }
 
 
     override fun onStop() {
         super.onStop()
         unregisterReceiver(locationReceiver)
+        unregisterReceiver(convoyUpdateReceiver)
     }
 
 
