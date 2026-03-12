@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import android.widget.TextView
 import android.Manifest
 import android.content.pm.PackageManager
+import android.media.MediaRecorder
 import android.os.Build
 import androidx.core.app.ActivityCompat
 import com.google.android.gms.location.LocationServices
@@ -45,6 +46,7 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 
 
 class MainActivity : AppCompatActivity() {
@@ -58,6 +60,23 @@ class MainActivity : AppCompatActivity() {
     private var activeConvoyId: String? = null
 
     private val convoyMarkers = mutableMapOf<String, Marker>()
+
+    private var recorder: MediaRecorder? = null
+    private var audioFile: File? = null
+    private var isRecording = false
+
+    private fun startRecording() {
+        audioFile = File(externalCacheDir?.absolutePath, "convoy_voice.m4a")
+
+        recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            MediaRecorder(this)
+        } else {
+            MediaRecorder()
+        }.apply {
+            setAudioSource(MediaRecorder.AudioSource.MIC)
+            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+        }
+    }
 
     private fun setConvoyUI(convoyId: String?, tv: TextView, btnStart: Button, btnEnd: Button) {
         if (!convoyId.isNullOrBlank()) {
