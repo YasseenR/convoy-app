@@ -68,14 +68,17 @@ class MainActivity : AppCompatActivity() {
     private fun startRecording() {
         audioFile = File(externalCacheDir?.absolutePath, "convoy_voice.m4a")
 
-        recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            MediaRecorder(this)
-        } else {
-            MediaRecorder()
-        }.apply {
+        recorder = MediaRecorder(this).apply {
             setAudioSource(MediaRecorder.AudioSource.MIC)
             setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            setOutputFile(audioFile?.absolutePath)
+            prepare()
+            start()
         }
+
+        isRecording = true
+        Toast.makeText(this, "Recording...", Toast.LENGTH_SHORT).show()
     }
 
     private fun setConvoyUI(convoyId: String?, tv: TextView, btnStart: Button, btnEnd: Button) {
