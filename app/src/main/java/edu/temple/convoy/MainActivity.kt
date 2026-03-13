@@ -78,6 +78,10 @@ class MainActivity : AppCompatActivity() {
 
     private var mediaPlayer: MediaPlayer? = null
 
+    data class VoiceMessage(val username: String, val url: String)
+    private val messageQueue = mutableListOf<VoiceMessage>()
+    private var isPlaying = false
+
 
 
     private fun startRecording() {
@@ -285,6 +289,7 @@ class MainActivity : AppCompatActivity() {
         val btnLeave = findViewById<Button>(R.id.btnLeaveConvoy)
         val btnEnd = findViewById<Button>(R.id.btnEndConvoy)
         val btnRecord = findViewById<FloatingActionButton>(R.id.btnRecord)
+        findViewById<TextView>(R.id.currentSpeaker).text = ""
 
 
         findViewById<Button>(R.id.btnLogout).setOnClickListener {
@@ -411,14 +416,21 @@ class MainActivity : AppCompatActivity() {
                                 convoyId = id
                             )
                             if (resp["status"]?.toString() == "SUCCESS") {
-                                store.saveConvoyId(id)
-                                store.saveCreatedConvoyId(null)
-                                setConvoyUI(id, tvConvoyId, btnStart, btnEnd, btnRecord)
-                                startConvoyService()
+                                val convoyId = resp["convoy_id"]?.toString()
+                                tvConvoyId.text = "Convoy: $convoyId"
+                                activeConvoyId = convoyId
+                                store.saveConvoyId(convoyId)
+                                btnRecord.show()
+
+                                val svc =
+                                    Intent(this@MainActivity, ConvoyLocationService::class.java)
+                                if (Build.VERSION.SDK_INT >= 26) {
+                                    startForegroundService(svc)
+                                } else {
+                                    startService(svc)
+                                }
                             } else {
-                                Toast.makeText(this@MainActivity,
-                                    resp["message"]?.toString() ?: "Error joining",
-                                    Toast.LENGTH_SHORT).show()
+                                Toast.makeText(this@MainActivity, resp["message"]?.toString() ?: "Error", Toast.LENGTH_LONG).show()
                             }
                         } catch (e: Exception) {
                             Toast.makeText(this@MainActivity, "Network error", Toast.LENGTH_SHORT).show()
@@ -802,13 +814,66 @@ class MainActivity : AppCompatActivity() {
                         val audioUrl = json.getString("message_file")
                         val username = json.getString("username")
 
-                        playIncomingAudio(username, audioUrl)
+                        lifecycleScope.launch {
+                            if (username == store.username.first()) {
+                                return@launch
+                            }
+
+                            queueVoiceMessage(username, audioUrl)
+                        }
+
+
+
                     }
                 }
             } catch (e: Exception) {
                 Log.e("Convoy", "Error parsing FCM Payload", e)
             }
 
+        }
+    }
+
+    private fun queueVoiceMessage(sender: String, url: String) {
+        runOnUiThread {
+            messageQueue.add(VoiceMessage(sender, url))
+
+            if (!isPlaying) {
+                playNextInQueue()
+            }
+        }
+    }
+
+    private fun playNextInQueue() {
+        if (messageQueue.isEmpty()) {
+            isPlaying = false
+            // Hide UI/Username display here
+            findViewById<TextView>(R.id.currentSpeaker).text = ""
+            return
+        }
+
+        isPlaying = true
+        val currentMessage = messageQueue.removeAt(0)
+
+        // Update UI to show who is currently speaking
+        findViewById<TextView>(R.id.currentSpeaker).text = "Listening to: ${currentMessage.username}"
+
+        mediaPlayer?.release()
+        mediaPlayer = MediaPlayer().apply {
+            setDataSource(currentMessage.url)
+            prepareAsync()
+            setOnPreparedListener { start() }
+
+            // CRITICAL: When finished, call playNextInQueue to trigger the next message
+            setOnCompletionListener {
+                it.release()
+                mediaPlayer = null
+                playNextInQueue()
+            }
+
+            setOnErrorListener { _, _, _ ->
+                playNextInQueue() // Skip broken links
+                true
+            }
         }
     }
 
